@@ -106,11 +106,28 @@ setInterval(async () => {
 
 // Обработчик новых сообщений
 bot.on(async (ctx) => {
+
     const messageTime = ctx.message.date; // Время отправки
 
     // Игнорируем старые сообщения
     if (messageTime < startTime) return;
 
+    // Проверяем, что это событие добавления в беседу
+    if (ctx.message.action && ctx.message.action.type === 'chat_invite_user') {
+        const userId = ctx.message.action.member_id; // ID пользователя, которого добавили
+        const chatId = ctx.message.peer_id; // ID беседы
+
+        // Проверяем, что добавили именно бота
+        if (userId === -ctx.groupId) {
+            await bot.execute('messages.send', {
+                chat_id: chatId - 2000000000, // Преобразуем peer_id в chat_id
+                message: 'Привет, друзья!\nСпасибо, что добавили меня в беседу! 😊\nЯ буду следить за порядком и удалять спам, если выдадите мне права администратора!',
+                random_id: Math.floor(Math.random() * 1e9), // Уникальный ID для сообщения
+            });
+        }
+    }
+
+    // Остальная логика обработки сообщений
     if (ctx.message.text && ctx.message.conversation_message_id) {
         const normalizedText = normalizeText(ctx.message.text);
         const hasForbiddenWord = forbiddenWords.some(word => normalizedText.includes(word));
@@ -130,7 +147,7 @@ bot.on(async (ctx) => {
             peer_id: ctx.message.peer_id,
         });
 
-        // Если кэш превышает 10 сообщений, удаляем самое старое
+        // Если кэш превышает 50 сообщений, удаляем самое старое
         if (messageCache.length > 50) {
             const removedMessage = messageCache.shift();
             console.log(`Сообщение ${removedMessage.id} удалено из кэша.`);
