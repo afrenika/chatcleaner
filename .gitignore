@@ -1,0 +1,43 @@
+# Логи и временные файлы
+*.log
+*.tmp
+*.temp
+
+# Папка с зависимостями (устанавливается через npm install / yarn install)
+node_modules/
+
+# Файлы окружения (не должны попадать в репозиторий из-за sensitive данных)
+.env
+.env.local
+.env.development
+.env.test
+.env.production
+
+# Файлы сборки и артефакты (генерируются автоматически)
+/dist/
+/build/
+/out/
+/coverage/
+
+# Кэш (не нужен в репозитории)
+.cache/
+.yarn/.cache/
+
+# IDE и редакторы (локальные настройки)
+.idea/
+.vscode/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Системные файлы (не нужны в репозитории)
+.DS_Store
+Thumbs.db
+
+# Дополнительные файлы (временные или резервные копии)
+*.bak
+*.backup
+*.orig
+*.rej
