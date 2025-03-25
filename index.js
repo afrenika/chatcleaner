@@ -64,6 +64,15 @@ async function deleteMessage(peerId, messageId) {
     }
 }
 
+async function kickUser(peerId, userId) {
+    try {
+        await bot.execute('messages.removeChatUser', { chat_id: peerId - 2000000000, member_id: userId });
+        console.log(`Пользователь ${userId} исключен из беседы ${peerId}.`);
+    } catch (err) {
+        console.error(`Ошибка при исключении пользователя ${userId}:`, err);
+    }
+}
+
 // Функция получения текста сообщения по conversation_message_id
 async function getMessageText(peerId, messageId) {
     try {
@@ -98,6 +107,7 @@ setInterval(async () => {
             if (hasForbiddenWord || hasUntrustedLink) {
                 console.log(`Нарушение в сообщении ${msg.id}:`, messageText);
                 await deleteMessage(msg.peer_id, msg.id);
+                await kickUser(ctx.message.peer_id, ctx.message.from_id);
                 messageCache.splice(i, 1);
             }
         }
@@ -138,6 +148,7 @@ bot.on(async (ctx) => {
             logViolation(ctx.message.from_id, ctx.message.text, hasUntrustedLink ? 'непроверенная ссылка' : 'запрещенное слово');
 
             await deleteMessage(ctx.message.peer_id, ctx.message.conversation_message_id);
+            await kickUser(ctx.message.peer_id, ctx.message.from_id);
             return;
         }
 
