@@ -6,6 +6,8 @@ const fs = require('fs');
 const forbiddenWords = JSON.parse(fs.readFileSync('forbiddenWords.json', 'utf-8'));
 const trustedDomains = JSON.parse(fs.readFileSync('trusted_domains.json', 'utf-8')); // Список проверенных доменов
 
+// ID сообщества, участников которого мы проверяем
+const TARGET_GROUP_ID = 'kubik232';
 // Время запуска бота
 const startTime = Math.floor(Date.now() / 1000);
 
@@ -58,6 +60,34 @@ function logInvite(group_id) {
     });
 }
 
+function logMessage(ctx) {
+    try {
+        const timestamp = new Date().toISOString();
+        const userId = ctx.message.from_id;
+        const peerId = ctx.message.peer_id;
+        const messageText = ctx.message.text || '(нет текста)';
+
+        // Проверяем наличие вложений
+        let hasAttachments = false;
+        let attachmentTypes = [];
+
+        if (ctx.message.attachments && ctx.message.attachments.length > 0) {
+            hasAttachments = true;
+            attachmentTypes = ctx.message.attachments.map(att => att.type);
+        }
+
+        const logEntry = `[${timestamp}] Сообщение от ${userId} в беседу ${peerId};Текст: "${messageText}; Вложения: ${hasAttachments ? 'Да' : 'Нет'};${hasAttachments ? ` (Типы: ${attachmentTypes.join(', ')})` : ''}\n`
+
+        fs.appendFile('messages.log', logEntry, (err) => {
+            if (err) console.error('Ошибка при записи в лог сообщений:', err);
+        });
+
+    } catch (err) {
+        console.error('Ошибка при логировании сообщения:', err);
+    }
+}
+
+
 // Функция удаления сообщений
 async function deleteMessage(peerId, messageId) {
     try {
@@ -74,10 +104,29 @@ async function deleteMessage(peerId, messageId) {
 
 async function kickUser(peerId, userId) {
     try {
-        await bot.execute('messages.removeChatUser', { chat_id: peerId - 2000000000, member_id: userId });
+        await bot.execute('messages.removeChatUser', {
+            chat_id: peerId - 2000000000,
+            member_id: userId
+        });
         console.log(`Пользователь ${userId} исключен из беседы ${peerId}.`);
     } catch (err) {
         console.error(`Ошибка при исключении пользователя ${userId}:`, err);
+    }
+}
+
+// Функция проверки, состоит ли пользователь в целевом сообществе
+async function isGroupMember(userId) {
+
+    try {
+        const response = await bot.execute('groups.isMember', {
+            group_id: TARGET_GROUP_ID,
+            user_id: userId,
+        });
+
+        return response;
+    } catch (err) {
+        console.error(`Ошибка при проверке участника группы ${userId}:`, err);
+        return true; // В случае ошибки считаем, что пользователь состоит в группе
     }
 }
 
@@ -115,7 +164,7 @@ setInterval(async () => {
             if (hasForbiddenWord || hasUntrustedLink) {
                 console.log(`Нарушение в сообщении ${msg.id}:`, messageText);
                 await deleteMessage(msg.peer_id, msg.id);
-                await kickUser(ctx.message.peer_id, ctx.message.from_id);
+                await kickUser(msg.peer_id, msg.from_id);
                 messageCache.splice(i, 1);
             }
         }
@@ -124,7 +173,6 @@ setInterval(async () => {
 
 // Обработчик новых сообщений
 bot.on(async (ctx) => {
-
     const messageTime = ctx.message.date; // Время отправки
 
     // Игнорируем старые сообщения
@@ -139,13 +187,26 @@ bot.on(async (ctx) => {
         if (userId === -ctx.groupId) {
             await bot.execute('messages.send', {
                 chat_id: chatId - 2000000000, // Преобразуем peer_id в chat_id
-                message: 'Привет, друзья!\nСпасибо, что добавили меня в беседу! 😊\nЯ буду следить за порядком и удалять спам, если выдадите мне права администратора!',
+                message: 'Привет, друзья!\nСпасибо, что добавили меня в беседу! 😊\nЯ буду следить за порядком и удалять тех, кто не состоит в нашем сообществе, а также удалять спам, если выдадите мне права администратора!',
                 random_id: Math.floor(Math.random() * 1e9), // Уникальный ID для сообщения
             });
             logInvite(chatId);
+        } else if (userId > 0) { // Если добавили обычного пользователя
+            const isMember = await isGroupMember(userId);
+            if (!isMember) {
+                console.log(`Пользователь ${userId} не состоит в группе ${TARGET_GROUP_ID}`);
+                await kickUser(chatId, userId);
+
+                // Отправляем сообщение о причине исключения
+                await bot.execute('messages.send', {
+                    chat_id: chatId - 2000000000,
+                    message: `@id${userId} (Пользователь) был исключен, так как не состоит в сообществе.`,
+                    random_id: Math.floor(Math.random() * 1e9),
+                });
+            }
         }
     }
-
+    logMessage(ctx);
     // Остальная логика обработки сообщений
     if (ctx.message.text && ctx.message.conversation_message_id) {
         const normalizedText = normalizeText(ctx.message.text);
@@ -165,6 +226,7 @@ bot.on(async (ctx) => {
         messageCache.push({
             id: ctx.message.conversation_message_id,
             peer_id: ctx.message.peer_id,
+            from_id: ctx.message.from_id
         });
 
         // Если кэш превышает 50 сообщений, удаляем самое старое

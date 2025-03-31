@@ -42,3 +42,6 @@ Thumbs.db
 *.orig
 *.rej
 TEST.js
+/temp_images
+message_log.txt
+tst.js

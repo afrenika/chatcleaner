@@ -13,8 +13,5 @@
   },
   "overrides": {
     "axios": "^1.8.1"
-  },
-  "devDependencies": {
-    "@types/node": "^22.13.10"
   }
 }
