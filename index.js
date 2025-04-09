@@ -116,7 +116,6 @@ async function kickUser(peerId, userId) {
 
 // Функция проверки, состоит ли пользователь в целевом сообществе
 async function isGroupMember(userId) {
-
     try {
         const response = await bot.execute('groups.isMember', {
             group_id: TARGET_GROUP_ID,
@@ -149,7 +148,6 @@ async function getMessageText(peerId, messageId) {
 
 // Проверка сообщений в кэше каждые 10 секунд
 setInterval(async () => {
-    console.log('Запуск проверки сообщений в чате...');
 
     for (let i = messageCache.length - 1; i >= 0; i--) {
         const msg = messageCache[i];
@@ -157,11 +155,11 @@ setInterval(async () => {
         const messageText = await getMessageText(msg.peer_id, msg.id);
 
         if (messageText) {
-            const normalizedText = normalizeText(messageText);
-            const hasForbiddenWord = forbiddenWords.some(word => normalizedText.includes(word));
+            // const normalizedText = normalizeText(messageText);
+            // const hasForbiddenWord = forbiddenWords.some(word => normalizedText.includes(word));
             const hasUntrustedLink = containsUntrustedLink(messageText);
 
-            if (hasForbiddenWord || hasUntrustedLink) {
+            if (hasUntrustedLink) {
                 console.log(`Нарушение в сообщении ${msg.id}:`, messageText);
                 await deleteMessage(msg.peer_id, msg.id);
                 await kickUser(msg.peer_id, msg.from_id);
@@ -184,36 +182,30 @@ bot.on(async (ctx) => {
         const chatId = ctx.message.peer_id; // ID беседы
 
         // Проверяем, что добавили именно бота
-        if (userId === -ctx.groupId) {
-            await bot.execute('messages.send', {
-                chat_id: chatId - 2000000000, // Преобразуем peer_id в chat_id
-                message: 'Привет, друзья!\nСпасибо, что добавили меня в беседу! 😊\nЯ буду следить за порядком и удалять тех, кто не состоит в нашем сообществе, а также удалять спам, если выдадите мне права администратора!',
-                random_id: Math.floor(Math.random() * 1e9), // Уникальный ID для сообщения
-            });
-            logInvite(chatId);
-        } else if (userId > 0) { // Если добавили обычного пользователя
+        // if (userId === -ctx.groupId) {
+        //     await bot.execute('messages.send', {
+        //         chat_id: chatId - 2000000000, // Преобразуем peer_id в chat_id
+        //         message: 'Привет, друзья!\nСпасибо, что добавили меня в беседу! 😊\nЯ буду следить за порядком и удалять тех, кто не состоит в нашем сообществе, а также удалять спам, если выдадите мне права администратора!',
+        //         random_id: Math.floor(Math.random() * 1e9), // Уникальный ID для сообщения
+        //     });
+        //     logInvite(chatId);
+        // } else
+            if (userId > 0) { // Если добавили обычного пользователя
             const isMember = await isGroupMember(userId);
             if (!isMember) {
                 console.log(`Пользователь ${userId} не состоит в группе ${TARGET_GROUP_ID}`);
                 await kickUser(chatId, userId);
-
-                // Отправляем сообщение о причине исключения
-                await bot.execute('messages.send', {
-                    chat_id: chatId - 2000000000,
-                    message: `@id${userId} (Пользователь) был исключен, так как не состоит в сообществе.`,
-                    random_id: Math.floor(Math.random() * 1e9),
-                });
             }
         }
     }
     logMessage(ctx);
     // Остальная логика обработки сообщений
     if (ctx.message.text && ctx.message.conversation_message_id) {
-        const normalizedText = normalizeText(ctx.message.text);
-        const hasForbiddenWord = forbiddenWords.some(word => normalizedText.includes(word));
+        // const normalizedText = normalizeText(ctx.message.text);
+        // const hasForbiddenWord = forbiddenWords.some(word => normalizedText.includes(word));
         const hasUntrustedLink = containsUntrustedLink(ctx.message.text);
 
-        if (hasForbiddenWord || hasUntrustedLink) {
+        if (hasUntrustedLink) {
             console.log('Нарушение в новом сообщении:', ctx.message.text);
             logViolation(ctx.message.from_id, ctx.message.text, hasUntrustedLink ? 'непроверенная ссылка' : 'запрещенное слово');
 
@@ -230,7 +222,7 @@ bot.on(async (ctx) => {
         });
 
         // Если кэш превышает 50 сообщений, удаляем самое старое
-        if (messageCache.length > 50) {
+        if (messageCache.length > 10) {
             const removedMessage = messageCache.shift();
             console.log(`Сообщение ${removedMessage.id} удалено из кэша.`);
         }
