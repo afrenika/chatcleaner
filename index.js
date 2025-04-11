@@ -16,6 +16,7 @@ const bot = new VkBot(process.env.VK_TOKEN); // Замените на ваш т�
 
 // Кэш сообщений
 let messageCache = [];
+let chatsCache = new Map(); // Кэш бесед: {peerId, members[]}
 
 // Функция нормализации текста (замена латинских букв на русские аналоги)
 function normalizeText(text) {
@@ -104,18 +105,41 @@ async function deleteMessage(peerId, messageId) {
 
 async function kickUser(peerId, userId) {
     try {
+        // 1. Проверяем, что пользователь действительно находится в беседе
+        const members = await fetchChatMembers(peerId);
+
+        if (!members.includes(userId)) {
+            console.log(`[${peerId}] Пользователь ${userId} уже не в беседе, пропускаем исключение`);
+            return;
+        }
+
+        // 2. Пытаемся исключить пользователя
         await bot.execute('messages.removeChatUser', {
             chat_id: peerId - 2000000000,
             member_id: userId
         });
-        console.log(`Пользователь ${userId} исключен из беседы ${peerId}.`);
+
+        console.log(`[${peerId}] Пользователь ${userId} успешно исключен`);
+
+        // 3. Обновляем кэш (если пользователь был в кэше)
+        if (chatsCache.has(peerId)) {
+            const updatedMembers = chatsCache.get(peerId).filter(id => id !== userId);
+            chatsCache.set(peerId, updatedMembers);
+        }
     } catch (err) {
-        console.error(`Ошибка при исключении пользователя ${userId}:`, err);
+        if (err.code === 15) { // Код 15 = пользователь не в беседе
+            console.log(`[${peerId}] Пользователь ${userId} уже покинул беседу`);
+        } else if (err.code === 925) { // Нет прав на исключение
+            console.error(`[${peerId}] Нет прав для исключения ${userId}`);
+        } else {
+            console.error(`[${peerId}] Ошибка при исключении ${userId}:`, err);
+        }
     }
 }
 
 // Функция проверки, состоит ли пользователь в целевом сообществе
 async function isGroupMember(userId) {
+
     try {
         const response = await bot.execute('groups.isMember', {
             group_id: TARGET_GROUP_ID,
@@ -146,8 +170,93 @@ async function getMessageText(peerId, messageId) {
     return null;
 }
 
+
+
+// Функция для получения списка бесед бота
+async function fetchConversations() {
+    try {
+        const response = await bot.execute('messages.getConversations', {
+            filter: 'all',
+            count: 200,
+        });
+        return response.items?.map(conv => conv.conversation.peer.id) || [];
+    } catch (err) {
+        console.error('Ошибка получения бесед:', err);
+        return [];
+    }
+}
+
+// Функция для получения участников беседы (без проверки)
+async function fetchChatMembers(peerId) {
+    try {
+        const response = await bot.execute('messages.getConversationMembers', {
+            peer_id: peerId,
+        });
+        return response.items?.map(member => member.member_id).filter(id => id > 0) || [];
+    } catch (err) {
+        console.error(`Ошибка получения участников беседы ${peerId}:`, err);
+        return [];
+    }
+}
+
+// Инициализация кэша при запуске
+async function initCache() {
+    const conversations = await fetchConversations();
+
+    for (const peerId of conversations) {
+        if (peerId > 2000000000) { // Только групповые беседы
+            const members = await fetchChatMembers(peerId);
+            chatsCache.set(peerId, members);
+            console.log(`Загружена беседа ${peerId} с ${members.length} участниками`);
+        }
+    }
+}
+
+// Проверка участников беседы (отдельная функция)
+async function verifyChatMembers(peerId) {
+    if (!chatsCache.has(peerId)) return;
+
+    // 1. Получаем текущий список участников из API
+    const currentMembers = await fetchChatMembers(peerId);
+    if (currentMembers.length === 0) return;
+
+    // 2. Достаем кэшированный список
+    const cachedMembers = chatsCache.get(peerId) || [];
+
+    // 3. Находим новых участников (есть в current, но нет в cached)
+    const newMembers = currentMembers.filter(member => !cachedMembers.includes(member));
+
+    if (newMembers.length === 0) {
+        console.log(`[${peerId}] Нет новых участников для проверки`);
+        return;
+    }
+
+    console.log(`[${peerId}] Новые участники для проверки:`, newMembers);
+
+    // 4. Проверяем только новых участников
+    for (const memberId of newMembers) {
+        const isMember = await isGroupMember(memberId);
+        if (!isMember) {
+            console.log(`[${peerId}] Нарушитель найден: ${memberId}`);
+            await kickUser(peerId, memberId);
+        }
+    }
+    // 5. Обновляем кэш актуальным списком участников
+    chatsCache.set(peerId, currentMembers);
+    console.log(`[${peerId}] Кэш обновлен, теперь ${currentMembers.length} участников`);
+}
+
+// Периодическая проверка всех бесед
+async function verifyAllChats() {
+    for (const [peerId] of chatsCache) {
+        await verifyChatMembers(peerId);
+    }
+}
+
+
 // Проверка сообщений в кэше каждые 10 секунд
 setInterval(async () => {
+    console.log('Запуск проверки сообщений в чате...');
 
     for (let i = messageCache.length - 1; i >= 0; i--) {
         const msg = messageCache[i];
@@ -176,31 +285,51 @@ bot.on(async (ctx) => {
     // Игнорируем старые сообщения
     if (messageTime < startTime) return;
 
+     // ID пользователя, которого добавили
+    const peerId = ctx.message.peer_id; // ID беседы
+
     // Проверяем, что это событие добавления в беседу
     if (ctx.message.action && ctx.message.action.type === 'chat_invite_user') {
-        const userId = ctx.message.action.member_id; // ID пользователя, которого добавили
-        const chatId = ctx.message.peer_id; // ID беседы
-
+        const userId = ctx.message.action.member_id;
         // Проверяем, что добавили именно бота
-        // if (userId === -ctx.groupId) {
-        //     await bot.execute('messages.send', {
-        //         chat_id: chatId - 2000000000, // Преобразуем peer_id в chat_id
-        //         message: 'Привет, друзья!\nСпасибо, что добавили меня в беседу! 😊\nЯ буду следить за порядком и удалять тех, кто не состоит в нашем сообществе, а также удалять спам, если выдадите мне права администратора!',
-        //         random_id: Math.floor(Math.random() * 1e9), // Уникальный ID для сообщения
-        //     });
-        //     logInvite(chatId);
-        // } else
-            if (userId > 0) { // Если добавили обычного пользователя
+        if (userId === -ctx.groupId) {
+            await bot.execute('messages.send', {
+                chat_id: peerId - 2000000000, // Преобразуем peer_id в chat_id
+                message: 'Привет, друзья!\nСпасибо, что добавили меня в беседу! 😊\nЯ буду следить за порядком и удалять тех, кто не состоит в нашем сообществе, а также удалять спам, если выдадите мне права администратора!',
+                random_id: Math.floor(Math.random() * 1e9), // Уникальный ID для сообщения
+            });
+            logInvite(peerId);
+            const members = await fetchChatMembers(peerId);
+            chatsCache.set(peerId, members);
+            console.log(`Бот добавлен в беседу ${peerId}, участников: ${members.length}`);
+        } else if (userId > 0) { // Если добавили обычного пользователя
             const isMember = await isGroupMember(userId);
             if (!isMember) {
                 console.log(`Пользователь ${userId} не состоит в группе ${TARGET_GROUP_ID}`);
-                await kickUser(chatId, userId);
+                await kickUser(peerId, userId);
+            }
+            else{
+                if (chatsCache.has(peerId)) {
+                    const members = chatsCache.get(peerId);
+                    if (!members.includes(userId)) {
+                        members.push(userId);
+                        chatsCache.set(peerId, members);
+                    }
+                }
             }
         }
     }
-    logMessage(ctx);
+    if (ctx.message.action?.type === 'chat_kick_user') {
+        const { member_id: userId, peer_id: peerId } = ctx.message;
+        if (chatsCache.has(peerId)) {
+            const updatedMembers = chatsCache.get(peerId).filter(id => id !== userId);
+            chatsCache.set(peerId, updatedMembers);
+        }
+    }
+
     // Остальная логика обработки сообщений
     if (ctx.message.text && ctx.message.conversation_message_id) {
+        logMessage(ctx);
         // const normalizedText = normalizeText(ctx.message.text);
         // const hasForbiddenWord = forbiddenWords.some(word => normalizedText.includes(word));
         const hasUntrustedLink = containsUntrustedLink(ctx.message.text);
@@ -209,19 +338,19 @@ bot.on(async (ctx) => {
             console.log('Нарушение в новом сообщении:', ctx.message.text);
             logViolation(ctx.message.from_id, ctx.message.text, hasUntrustedLink ? 'непроверенная ссылка' : 'запрещенное слово');
 
-            await deleteMessage(ctx.message.peer_id, ctx.message.conversation_message_id);
-            await kickUser(ctx.message.peer_id, ctx.message.from_id);
+            await deleteMessage(peerId, ctx.message.conversation_message_id);
+            await kickUser(peerId, ctx.message.from_id);
             return;
         }
 
         // Добавляем сообщение в кэш
         messageCache.push({
             id: ctx.message.conversation_message_id,
-            peer_id: ctx.message.peer_id,
+            peer_id: peerId,
             from_id: ctx.message.from_id
         });
 
-        // Если кэш превышает 50 сообщений, удаляем самое старое
+        // Если кэш превышает 10 сообщений, удаляем самое старое
         if (messageCache.length > 10) {
             const removedMessage = messageCache.shift();
             console.log(`Сообщение ${removedMessage.id} удалено из кэша.`);
@@ -230,10 +359,15 @@ bot.on(async (ctx) => {
 });
 
 // Запуск бота
-bot.startPolling((err) => {
+bot.startPolling(async (err) => {
     if (err) {
-        console.error('Ошибка при запуске бота:', err);
+        console.error('Ошибка запуска бота:', err);
     } else {
-        console.log('Бот запущен и слушает сообщения...');
+        console.log('Бот запущен. Инициализация кэша...');
+        await initCache();
+        console.log(`Кэш инициализирован, загружено ${chatsCache.size} бесед`);
+
+        // Запуск периодических проверок
+        setInterval(verifyAllChats, 10000); // Каждые 5 минут
     }
 });
