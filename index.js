@@ -14,8 +14,38 @@ const startTime = Math.floor(Date.now() / 1000);
 // Создаем экземпляр бота
 const bot = new VkBot(process.env.VK_TOKEN); // Замените на ваш токен
 
+function getChatIds() {
+    try {
+        return JSON.parse(process.env.CHAT_IDS || '[]');
+    } catch (e) {
+        console.error('Ошибка парсинга CHAT_IDS:', e);
+        return [];
+    }
+}
+
+// Функция обновления списка бесед в .env
+function updateChatIds(newChatIds) {
+    const envPath = '.env';
+    let envContent = fs.readFileSync(envPath, 'utf-8');
+
+    // Обновляем значение
+    if (envContent.includes('CHAT_IDS=')) {
+        envContent = envContent.replace(
+            /CHAT_IDS=.*/,
+            `CHAT_IDS="${JSON.stringify(newChatIds)}"`
+        );
+    } else {
+        envContent += `\nCHAT_IDS="${JSON.stringify(newChatIds)}"`;
+    }
+
+    // Записываем обратно
+    fs.writeFileSync(envPath, envContent);
+    process.env.CHAT_IDS = JSON.stringify(newChatIds); // Обновляем в процессе
+}
+
 // Кэш сообщений
 let messageCache = [];
+let groups = getChatIds();
 let chatsCache = new Map(); // Кэш бесед: {peerId, members[]}
 
 // Функция нормализации текста (замена латинских букв на русские аналоги)
@@ -178,7 +208,9 @@ async function fetchConversations() {
         const response = await bot.execute('messages.getConversations', {
             filter: 'all',
             count: 200,
+            extended: 1
         });
+
         return response.items?.map(conv => conv.conversation.peer.id) || [];
     } catch (err) {
         console.error('Ошибка получения бесед:', err);
@@ -195,14 +227,21 @@ async function fetchChatMembers(peerId) {
         return response.items?.map(member => member.member_id).filter(id => id > 0) || [];
     } catch (err) {
         console.error(`Ошибка получения участников беседы ${peerId}:`, err);
+        const index = groups.indexOf(peerId);
+        if (index !== -1) {
+            groups.splice(index, 1);
+            updateChatIds(groups);
+            console.log(`Беседа ${peerId} удалена из списка`);
+        }
+        // Очищаем кэш
+        chatsCache.delete(peerId);
         return [];
     }
 }
 
 // Инициализация кэша при запуске
 async function initCache() {
-    const conversations = await fetchConversations();
-
+    const conversations = groups;
     for (const peerId of conversations) {
         if (peerId > 2000000000) { // Только групповые беседы
             const members = await fetchChatMembers(peerId);
@@ -227,7 +266,7 @@ async function verifyChatMembers(peerId) {
     const newMembers = currentMembers.filter(member => !cachedMembers.includes(member));
 
     if (newMembers.length === 0) {
-        console.log(`[${peerId}] Нет новых участников для проверки`);
+        // console.log(`[${peerId}] Нет новых участников для проверки`);
         return;
     }
 
@@ -256,8 +295,6 @@ async function verifyAllChats() {
 
 // Проверка сообщений в кэше каждые 10 секунд
 setInterval(async () => {
-    console.log('Запуск проверки сообщений в чате...');
-
     for (let i = messageCache.length - 1; i >= 0; i--) {
         const msg = messageCache[i];
 
@@ -299,9 +336,7 @@ bot.on(async (ctx) => {
                 random_id: Math.floor(Math.random() * 1e9), // Уникальный ID для сообщения
             });
             logInvite(peerId);
-            const members = await fetchChatMembers(peerId);
-            chatsCache.set(peerId, members);
-            console.log(`Бот добавлен в беседу ${peerId}, участников: ${members.length}`);
+            return;
         } else if (userId > 0) { // Если добавили обычного пользователя
             const isMember = await isGroupMember(userId);
             if (!isMember) {
@@ -318,6 +353,19 @@ bot.on(async (ctx) => {
                 }
             }
         }
+    }
+
+    if (!groups.includes(ctx.message.peer_id)) {
+
+        // Если это касается нашего бота
+
+        console.log(`[${peerId}] Бота назначили администратором!`);
+        groups.push(peerId);
+        updateChatIds(groups);
+        const members = await fetchChatMembers(peerId);
+        chatsCache.set(peerId, members);
+        console.log(`Бот добавлен в беседу администратором ${peerId}, участников: ${members.length}`);
+
     }
     if (ctx.message.action?.type === 'chat_kick_user') {
         const { member_id: userId, peer_id: peerId } = ctx.message;
