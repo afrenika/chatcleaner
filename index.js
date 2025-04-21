@@ -84,8 +84,15 @@ function logViolation(userId, message, type) {
 }
 
 // Функция логирования приглашений в чат
-function logInvite(group_id) {
+function logInviteBot(group_id) {
     const logEntry = `Бот добавлен в чат: "${group_id}"\n`;
+    fs.appendFile('violations.log', logEntry, (err) => {
+        if (err) console.error('Ошибка при записи в лог:', err);
+    });
+}
+
+function logInvite(userId, group_id) {
+    const logEntry = `Пользователь ${userId} добавлен в чат: "${group_id}, не состоит в сообщевстве, и был удален"\n`;
     fs.appendFile('violations.log', logEntry, (err) => {
         if (err) console.error('Ошибка при записи в лог:', err);
     });
@@ -277,7 +284,9 @@ async function verifyChatMembers(peerId) {
         const isMember = await isGroupMember(memberId);
         if (!isMember) {
             console.log(`[${peerId}] Нарушитель найден: ${memberId}`);
+            logInvite(memberId, peerId);
             await kickUser(peerId, memberId);
+            verifyMessages(memberId);
         }
     }
     // 5. Обновляем кэш актуальным списком участников
@@ -292,14 +301,17 @@ async function verifyAllChats() {
     }
 }
 
-
-// Проверка сообщений в кэше каждые 10 секунд
-setInterval(async () => {
+async function verifyMessages(userId = null){
     for (let i = messageCache.length - 1; i >= 0; i--) {
         const msg = messageCache[i];
 
         const messageText = await getMessageText(msg.peer_id, msg.id);
-
+        if(userId !== null){
+            await deleteMessage(msg.peer_id, msg.id);
+            logViolation(msg.id, messageText, 'непроверенная ссылка');
+            messageCache.splice(i, 1);
+            break;
+        }
         if (messageText) {
             // const normalizedText = normalizeText(messageText);
             // const hasForbiddenWord = forbiddenWords.some(word => normalizedText.includes(word));
@@ -307,12 +319,21 @@ setInterval(async () => {
 
             if (hasUntrustedLink) {
                 console.log(`Нарушение в сообщении ${msg.id}:`, messageText);
+                logViolation(msg.peer_id, messageText, hasUntrustedLink ? 'непроверенная ссылка' : 'запрещенное слово');
                 await deleteMessage(msg.peer_id, msg.id);
                 await kickUser(msg.peer_id, msg.from_id);
                 messageCache.splice(i, 1);
             }
         }
     }
+}
+
+
+
+
+// Проверка сообщений в кэше каждые 10 секунд
+setInterval(async () => {
+    verifyMessages();
 }, 10000);
 
 // Обработчик новых сообщений
@@ -335,9 +356,10 @@ bot.on(async (ctx) => {
                 message: 'Привет, друзья!\nСпасибо, что добавили меня в беседу! 😊\nЯ буду следить за порядком и удалять тех, кто не состоит в нашем сообществе, а также удалять спам, если выдадите мне права администратора!',
                 random_id: Math.floor(Math.random() * 1e9), // Уникальный ID для сообщения
             });
-            logInvite(peerId);
+            logInviteBot(peerId);
             return;
-        } else if (userId > 0) { // Если добавили обычного пользователя
+        }
+        else if (userId > 0) { // Если добавили обычного пользователя
             const isMember = await isGroupMember(userId);
             if (!isMember) {
                 console.log(`Пользователь ${userId} не состоит в группе ${TARGET_GROUP_ID}`);
