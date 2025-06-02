@@ -312,19 +312,19 @@ async function verifyMessages(userId = null){
             messageCache.splice(i, 1);
             break;
         }
-        if (messageText) {
-            // const normalizedText = normalizeText(messageText);
-            // const hasForbiddenWord = forbiddenWords.some(word => normalizedText.includes(word));
-            const hasUntrustedLink = containsUntrustedLink(messageText);
-
-            if (hasUntrustedLink) {
-                console.log(`Нарушение в сообщении ${msg.id}:`, messageText);
-                logViolation(msg.peer_id, messageText, hasUntrustedLink ? 'непроверенная ссылка' : 'запрещенное слово');
-                await deleteMessage(msg.peer_id, msg.id);
-                await kickUser(msg.peer_id, msg.from_id);
-                messageCache.splice(i, 1);
-            }
-        }
+        // if (messageText) {
+        //     // const normalizedText = normalizeText(messageText);
+        //     // const hasForbiddenWord = forbiddenWords.some(word => normalizedText.includes(word));
+        //     const hasUntrustedLink = containsUntrustedLink(messageText);
+        //
+        //     if (hasUntrustedLink) {
+        //         console.log(`Нарушение в сообщении ${msg.id}:`, messageText);
+        //         logViolation(msg.peer_id, messageText, hasUntrustedLink ? 'непроверенная ссылка' : 'запрещенное слово');
+        //         await deleteMessage(msg.peer_id, msg.id);
+        //         await kickUser(msg.peer_id, msg.from_id);
+        //         messageCache.splice(i, 1);
+        //     }
+        // }
     }
 }
 
@@ -402,16 +402,16 @@ bot.on(async (ctx) => {
         logMessage(ctx);
         // const normalizedText = normalizeText(ctx.message.text);
         // const hasForbiddenWord = forbiddenWords.some(word => normalizedText.includes(word));
-        const hasUntrustedLink = containsUntrustedLink(ctx.message.text);
-
-        if (hasUntrustedLink) {
-            console.log('Нарушение в новом сообщении:', ctx.message.text);
-            logViolation(ctx.message.from_id, ctx.message.text, hasUntrustedLink ? 'непроверенная ссылка' : 'запрещенное слово');
-
-            await deleteMessage(peerId, ctx.message.conversation_message_id);
-            await kickUser(peerId, ctx.message.from_id);
-            return;
-        }
+        // const hasUntrustedLink = containsUntrustedLink(ctx.message.text);
+        //
+        // if (hasUntrustedLink) {
+        //     console.log('Нарушение в новом сообщении:', ctx.message.text);
+        //     logViolation(ctx.message.from_id, ctx.message.text, hasUntrustedLink ? 'непроверенная ссылка' : 'запрещенное слово');
+        //
+        //     await deleteMessage(peerId, ctx.message.conversation_message_id);
+        //     await kickUser(peerId, ctx.message.from_id);
+        //     return;
+        // }
 
         // Добавляем сообщение в кэш
         messageCache.push({
@@ -421,7 +421,7 @@ bot.on(async (ctx) => {
         });
 
         // Если кэш превышает 10 сообщений, удаляем самое старое
-        if (messageCache.length > 10) {
+        if (messageCache.length > 20) {
             const removedMessage = messageCache.shift();
             console.log(`Сообщение ${removedMessage.id} удалено из кэша.`);
         }
